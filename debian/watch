@@ -1,0 +1,2 @@
+version=3
+https://github.com/aki2o/plsense/tags .*/archive/v(\d.*)\.tar\.gz debian uupdate
