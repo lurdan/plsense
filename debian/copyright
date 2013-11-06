@@ -1,11 +1,11 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: PlSense
 Source: https://github.com/aki2o/plsense
 Upstream-Contact: Hiroaki Otsu, C<< <ootsuhiroaki at gmail.com> >>
+Upstream-Name: PlSense
 
 Files: *
 Copyright: Hiroaki Otsu, C<< <ootsuhiroaki at gmail.com> >>
-License: 
+License: Artistic or GPL-1+
 
 Files: debian/*
 Copyright: 2013, KURASHIKI Satoru <lurdan@gmail.com>
@@ -26,4 +26,3 @@ License: GPL-1+
  .
  On Debian systems, the complete text of version 1 of the GNU General
  Public License can be found in `/usr/share/common-licenses/GPL-1'.
-
