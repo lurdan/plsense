@@ -1,5 +1,5 @@
-plsense (0.10-0) UNRELEASED; urgency=low
+plsense (0.10-1) unstable; urgency=low
 
-  * Initial Release.
+  * Initial Release. (Closes: #728938)
 
  -- KURASHIKI Satoru <lurdan@gmail.com>  Wed, 6 Nov 2013 11:09:06 +0900
