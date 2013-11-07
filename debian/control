@@ -15,6 +15,8 @@ Build-Depends-Indep: libcache-cache-perl,
  perl-doc,
  perl (>= 5.15.2)
 Standards-Version: 3.9.4
+Vcs-Git: https://github.com/lurdan/plsense.git
+Vcs-Browser: https://github.com/lurdan/plsense/tree/dpkg
 Homepage: https://github.com/aki2o/plsense
 
 Package: plsense
