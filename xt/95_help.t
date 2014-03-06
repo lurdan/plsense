@@ -4,16 +4,15 @@ use lib "$FindBin::Bin/../tlib";
 use TestSupport;
 
 my $workpath = get_work_dir();
-my $addpath = "PATH=$FindBin::Bin/../bin:\${PATH} ; export PATH";
+my $addpath = "PATH=$FindBin::Bin/../blib/script:$FindBin::Bin/../bin:\${PATH} ; export PATH";
 my $chhome = "HOME=$workpath ; export HOME";
 
 system "$addpath ; $chhome ; plsense svstart > /dev/null";
 ok(is_running(), "start server process") or done_mytest();
 
 my @testsrc = grep { -f $_ } @ARGV;
-if ( $#testsrc < 0 ) {
-    @testsrc = (glob("$FindBin::Bin/sample/*.pl") , glob("$FindBin::Bin/sample/lib/*.pm"));
-}
+if ( $#testsrc < 0 ) { @testsrc = split m{ : }xms, $ENV{PLSENSE_TEST_SOURCE}; }
+if ( $#testsrc < 0 ) { @testsrc = (glob("$FindBin::Bin/sample/*.pl") , glob("$FindBin::Bin/sample/lib/*.pm")); }
 
 my ($fh, $cmdret);
 BUILD:
