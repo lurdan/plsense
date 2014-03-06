@@ -1,5 +1,5 @@
-plsense (0.10+git20131030-1) unstable; urgency=low
+plsense (0.20-1) unstable; urgency=medium
 
   * Initial Release. (Closes: #728938)
 
- -- KURASHIKI Satoru <lurdan@gmail.com>  Mon, 25 Nov 2013 11:09:06 +0900
+ -- KURASHIKI Satoru <lurdan@gmail.com>  Thu, 6 Mar 2014 20:08:43 +0900
