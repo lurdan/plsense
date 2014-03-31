@@ -1,0 +1,146 @@
+.TH PLSENSE "1" "March 2014" "User Commands"
+.SH NAME
+plsense \- Omni completion tool for Perl
+.SH SYNOPSIS
+plsense [Option] [Command] argument...
+.PP
+plsense [Option] \fB\-i\fR
+.SH DESCRIPTION
+PlSense is a development tool for Perl.
+PlSense provides Completion/Help about Module/Function/Variable optimized for context.
+.SH OPTIONS
+.TP
+\fB\-\-logfile\fR
+Path of log file.
+.TP
+\fB\-\-loglevel\fR
+Level of logging. Its value is for Log::Handler.
+.TP
+\fB\-\-maxtasks\fR
+Limit count of task that run on server process.
+.TP
+\fB\-\-port1\fR
+Port number for listening by main server process. Default is 33333.
+.TP
+\fB\-\-port2\fR
+Port number for listening by work server process. Default is 33334.
+.TP
+\fB\-\-port3\fR
+Port number for listening by resolve server process. Default is 33335.
+.TP
+\fB\-c\fR, \fB\-\-cachedir\fR
+Path of directory caching information for Completion/Help.
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show this message.
+.TP
+\fB\-i\fR, \fB\-\-interactive\fR
+Run interactively.
+.TP
+\fB\-v\fR, \fB\-\-version\fR
+Show vertion.
+.SH COMMANDS
+.TP
+a, assist [Code]
+Do assist about Code.
+.TP
+ahelp, assisthelp [Cand]
+Show help about Cand of last assist.
+.TP
+c, codeadd [Code]
+Add source to current location.
+.TP
+chelp, codehelp [Code]
+Show help about Code.
+.TP
+config
+Update configuration about plsense.
+.TP
+debuglex [Code/File]
+Show the PPI::Lexer layout as result of parsing Code/File for debugging.
+.TP
+debugmod [File/Module]
+Show detail of File/Module for debugging.
+.TP
+debugrt [Regexp]
+Show routing matched by Regexp for debugging.
+.TP
+debugstk
+Show quantity of stocked on server process for debugging.
+.TP
+debugsubst [Regexp]
+Show substitute matched by Regexp for debugging.
+.TP
+explore [Regexp]
+Show the packages matched by Regexp and their methods.
+.TP
+fhelp, subhelp [Sub] [Module]
+Show help about Sub of Module.
+.TP
+help [Command]
+Show detail help about Command.
+.TP
+loc, location
+Show current location.
+.TP
+loglevel [Level] [Server]
+Update the log level to Level about the logging of Server.
+.TP
+mhelp, modhelp [Module]
+Show help about Module.
+.TP
+o, open [File/Module]
+Open File/Module.
+.TP
+onf, onsub [Sub]
+Set current location by Sub for assist.
+.TP
+onfile [File]
+Set current location by File for assist.
+.TP
+onmod [Module]
+Set current location by Module for assist.
+.TP
+ps
+Show task list that is running on server process.
+.TP
+queue
+Show stack of task that is not yet running on server process.
+.TP
+ready [File/Module]
+Show status of File/Module.
+.TP
+refresh
+Refresh server process.
+.TP
+remove [File/Module]
+Remove the cached information about File/Module.
+.TP
+removeall
+Remove all cached information.
+.TP
+subinfo [Code]
+Show signature of the method detected by Code.
+.TP
+svstart, serverstart
+Start server process.
+.TP
+svstat, serverstatus
+Show server process status.
+.TP
+svstop, serverstop
+Stop server process.
+.TP
+u, update [File/Module]
+Update File/Module.
+.TP
+vhelp, varhelp [Var] [Module]
+Show help about Var of Module.
+.SH "AUTHOR"
+.IX Header "AUTHOR"
+Hiroaki Otsu, \f(CW\*(C`<ootsuhiroaki at gmail.com>\*(C'\fR
+.PP
+This manual page was written by KURASHIKI Satoru <lurdan@gmail.com>,
+for the Debian project (but may be used by others).
+.SH "SEE ALSO"
+.B plsense (3)
