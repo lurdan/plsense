@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use Class::Std;
 use PlSense::Logger;
+use PlSense::Util;
 {
     sub is_only_valid_context {
         my ($self, $code, $tok) = @_;
@@ -36,7 +37,7 @@ use PlSense::Logger;
         if ( $mdlnm eq "base" || $mdlnm eq "parent" ) {
 
             MODULE:
-            foreach my $mdl ( $self->get_mdlkeeper->get_packages ) {
+            foreach my $mdl ( mdlkeeper->get_packages ) {
                 if ( $inputed_is{$mdl->get_name} ) { next MODULE; }
                 $self->push_candidate($mdl->get_name, $mdl);
             }
@@ -44,7 +45,7 @@ use PlSense::Logger;
         }
         else {
 
-            my $mdl = $self->get_mdlkeeper->get_module($mdlnm) or return;
+            my $mdl = mdlkeeper->get_module($mdlnm) or return;
             if ( ! $mdl->is_exportable ) { return; }
 
             my @exportvars;
@@ -53,13 +54,13 @@ use PlSense::Logger;
             EXPORTVAR:
             foreach my $var ( @exportvars ) {
                 if ( ! $var ) { next EXPORTVAR; }
-                my $resolve = $self->get_addrrouter->resolve_address($var->get_fullnm) or next EXPORTVAR;
+                my $resolve = addrrouter->resolve_address($var->get_fullnm) or next EXPORTVAR;
                 if ( ! $resolve->isa("PlSense::Entity::Array") ) { next EXPORTVAR; }
                 my $scalar = $resolve->get_element or next EXPORTVAR;
                 if ( ! eval { $scalar->isa("PlSense::Entity::Scalar") } ) { next EXPORTVAR; }
                 EXPORTABLE:
                 foreach my $somenm ( split m{ \s+ }xms, $scalar->get_value ) {
-                    $somenm =~ s{ ^& }{}xms;
+                    $somenm =~ s{ \A & }{}xms;
                     my $some = $mdl->get_method($somenm) || $mdl->get_member($somenm) or next EXPORTABLE;
                     if ( $some->isa("PlSense::Symbol::Variable") && $some->is_lexical ) { next EXPORTABLE; }
                     if ( $inputed_is{$some->get_name} ) { next EXPORTABLE; }
@@ -69,7 +70,7 @@ use PlSense::Logger;
 
             if ( $mdl->exist_member('%EXPORT_TAGS') ) {
                 my $var = $mdl->get_member('%EXPORT_TAGS');
-                my $resolve = $self->get_addrrouter->resolve_address($var->get_fullnm) or return;
+                my $resolve = addrrouter->resolve_address($var->get_fullnm) or return;
                 if ( ! $resolve->isa("PlSense::Entity::Hash") ) { return; }
                 KEY:
                 foreach my $key ( $resolve->keys_member ) {
@@ -80,7 +81,7 @@ use PlSense::Logger;
                         $self->push_candidate(":".$key, $value);
                     }
                     else {
-                        $self->push_candidate(":".$key, $self->get_addrrouter->resolve_address($value));
+                        $self->push_candidate(":".$key, addrrouter->resolve_address($value));
                     }
                 }
             }

@@ -2,6 +2,8 @@ use Test::More;
 use FindBin;
 use lib "$FindBin::Bin/../tlib";
 use TestSupport;
+use PlSense::Configure;
+use PlSense::Util;
 use PlSense::ModuleKeeper;
 use PlSense::AddressRouter;
 use PlSense::Entity::Scalar;
@@ -9,8 +11,10 @@ use PlSense::Entity::Scalar;
 my $tmpdir = get_tmp_dir();
 ok(-d $tmpdir, "get tmp directory");
 
-my $mdlkeeper = PlSense::ModuleKeeper->new({ cachedir => $tmpdir });
-my $addrrouter = PlSense::AddressRouter->new({ cachedir => $tmpdir, mdlkeeper => $mdlkeeper, with_build => 0 });
+set_primary_config(cachedir => $tmpdir);
+setup_config();
+set_mdlkeeper(PlSense::ModuleKeeper->new());
+my $addrrouter = PlSense::AddressRouter->new({ with_build => 0 });
 ok($addrrouter->isa("PlSense::AddressRouter"), "new");
 
 my @routes;
@@ -32,7 +36,7 @@ $addrrouter->reset;
 @routes = $addrrouter->get_route("addr1");
 ok($#routes < 0, "reset route");
 
-$addrrouter->reload_current_project;
+$addrrouter->load_current_project;
 @routes = $addrrouter->get_route("addr1");
 ok($#routes == 1 && $routes[0] eq "resolve1", "stored route 1 of 2");
 ok($#routes == 1 && $routes[1]->isa("PlSense::Entity::Scalar") && $routes[1]->get_value eq "resolve2", "stored route 2 of 2");

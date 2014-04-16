@@ -94,6 +94,12 @@ sub fugaga {
 # hend ^ ARG1: \s \$hogevar \s As \s Unknown $
 # hend ^ RETURN: \s Literal \s As \s SCALAR $
 
+# hstart explicit own method
+#&hogege
+# hend ^ hogege \s is \s Method \s of \s main\[ [^\n]+ \]\. $
+# hend ^ ARG1: \s \$hogevar \s As \s Unknown $
+# hend ^ RETURN: \s Literal \s As \s SCALAR $
+
 
 # mstart own main method
 #hogege
@@ -112,5 +118,23 @@ sub fugaga {
 # mend ^ RETURN: \s \@fugavar2 \s As \s Unknown $
 # mend ^ FILE: \s .+ /02_defsub.pl $
 # mend ^ LINE: \s 56 $
+# mend ^ COL: \s 1 $
+
+# mstart explicit own main method
+#&hogege
+# mend ^ NAME: \s hogege $
+# mend ^ ARG1: \s \$hogevar \s As \s Unknown $
+# mend ^ RETURN: \s Literal \s As \s SCALAR $
+# mend ^ FILE: \s .+ /02_defsub.pl $
+# mend ^ LINE: \s 45 $
+# mend ^ COL: \s 1 $
+
+# mstart explicit own main method reference
+#\&hogege
+# mend ^ NAME: \s hogege $
+# mend ^ ARG1: \s \$hogevar \s As \s Unknown $
+# mend ^ RETURN: \s Literal \s As \s SCALAR $
+# mend ^ FILE: \s .+ /02_defsub.pl $
+# mend ^ LINE: \s 45 $
 # mend ^ COL: \s 1 $
 

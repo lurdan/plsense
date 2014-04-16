@@ -7,6 +7,8 @@ use Class::Std;
 use List::AllUtils qw{ firstidx lastidx };
 use Try::Tiny;
 use PlSense::Logger;
+use PlSense::Configure;
+use PlSense::Util;
 {
     my %cache_of :ATTR( :default(undef) );
     my %routeh_of :ATTR();
@@ -17,9 +19,6 @@ use PlSense::Logger;
     my %max_try_routing_of :ATTR( :init_arg<max_try_routing> :default(50) );
     my %commonkeyh_of :ATTR();
 
-    my %mdlkeeper_of :ATTR( :init_arg<mdlkeeper> );
-    sub get_mdlkeeper : PRIVATE { my ($self) = @_; return $mdlkeeper_of{ident $self}; }
-
     my %with_build_is :ATTR( :init_arg<with_build> );
     sub with_build { my ($self) = @_; return $with_build_is{ident $self} ? 1 : 0; }
 
@@ -29,31 +28,27 @@ use PlSense::Logger;
         $class->reset;
     }
 
-    sub switch_project {
+    sub setup_without_reload {
         my $self = shift;
-        my $projectnm = shift || "";
+        $self->update_project();
+        my $projnm = $self->get_project();
+        $cache_of{ident $self}->set_namespace( get_config("local") ? "Resolve.$projnm" : "Resolve" );
+    }
+
+    sub setup {
+        my $self = shift;
         my $force = shift || 0;
 
-        if ( ! $projectnm ) { return; }
-        if ( ! $force && $projectnm eq $self->get_project() ) {
-            logger->info("No need switch project data from [$projectnm]");
+        my $projnm = get_config("name");
+        if ( ! $force && $projnm eq $self->get_project() ) {
+            logger->info("No need switch project data from [$projnm]");
             return;
         }
 
-        my $nextkey = "perl.".$projectnm;
-        my $cacheh;
-        try   { $cacheh = $cache_of{ident $self}->get($nextkey); }
-        catch { $cacheh = $cache_of{ident $self}->get($nextkey); };
-        $routeh_of{ident $self} = $cacheh && $cacheh->{"route"} ? $cacheh->{"route"} : {};
-        $rrouteh_of{ident $self} = $cacheh && $cacheh->{"rroute"} ? $cacheh->{"rroute"} : {};
-        $self->init_common_key_hash;
-        $self->set_project($projectnm);
-        logger->info("Switched project routing to $projectnm");
-    }
-
-    sub reload_current_project {
-        my ($self) = @_;
-        $self->switch_project($self->get_project, 1);
+        $self->setup_without_reload();
+        $self->load_current_project();
+        logger->info("Switched project routing to $projnm");
+        return 1;
     }
 
     sub store_current_project {
@@ -62,6 +57,18 @@ use PlSense::Logger;
         try   { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self} }); }
         catch { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self} }); };
         logger->info("Stored project routing of $key");
+    }
+
+    sub load_current_project {
+        my $self = shift;
+        my $key = "perl.".$self->get_project();
+        my $cacheh;
+        try   { $cacheh = $cache_of{ident $self}->get($key); }
+        catch { $cacheh = $cache_of{ident $self}->get($key); };
+        $routeh_of{ident $self} = $cacheh && $cacheh->{"route"} ? $cacheh->{"route"} : {};
+        $rrouteh_of{ident $self} = $cacheh && $cacheh->{"rroute"} ? $cacheh->{"rroute"} : {};
+        $self->init_common_key_hash;
+        logger->info("Loaded project routing of $key");
     }
 
     sub store {
@@ -359,7 +366,7 @@ use PlSense::Logger;
                 $followaddr = $mtdnm.$followaddr;
                 my ($mdlnm, $filepath) = $mtdaddr =~ m{ \A main \[ (.+) \] \z }xms ? ("main", $1)
                                        :                                             ($mtdaddr, "");
-                my $mdl = $self->get_mdlkeeper->get_module($mdlnm, $filepath) or last ADDR;
+                my $mdl = mdlkeeper->get_module($mdlnm, $filepath) or last ADDR;
                 my $mtd = $mdl->get_any_method($mtdnm) or last ADDR;
                 if ( $mtd->is_importive ) {
                     logger->debug("Try get original method of [$mtdnm] in [".$mdl->get_name."]");
@@ -541,21 +548,9 @@ use PlSense::Logger;
         }
         elsif ( $ch eq "W" ) {
             if ( $etype ne 'instance' ) { return (); }
-            my $mdl = $self->get_mdlkeeper->get_module( $entity->get_modulenm ) or return ();
+            my $mdl = mdlkeeper->get_module( $entity->get_modulenm ) or return ();
             my $mtdnm = substr($follow, 2);
-            my $mtd;
-            if ( $mtdnm =~ s{ \A SUPER:: }{}xms ) {
-                PARENT:
-                for my $i ( 1..$mdl->count_parent ) {
-                    my $parent = $mdl->get_parent($i);
-                    $mtd = $parent->get_any_method($mtdnm);
-                    if ( $mtd ) { last PARENT; }
-                }
-            }
-            else {
-                $mtd = $mdl->get_any_method($mtdnm);
-            }
-            if ( ! $mtd ) { return (); }
+            my $mtd = $mdl->get_any_method($mtdnm) or return ();
             my $mtdfullnm = $mtd->get_fullnm;
             if ( ! $self->is_valid_address_to_resolve($mtdfullnm) ) { return (); }
             my $naddr = $fstr ? $mtdfullnm.".".$fstr : $mtdfullnm;
@@ -636,8 +631,8 @@ use PlSense::Logger;
             my $newmdlnm = $new->get_modulenm || "";
             if ( ! $oldmdlnm ) { return $new; }
             elsif ( $newmdlnm && $oldmdlnm ne $newmdlnm ) { return $new; }
-            # my $oldmdl = $self->get_mdlkeeper->get_module($old->get_modulenm);
-            # my $newmdl = $self->get_mdlkeeper->get_module($new->get_modulenm);
+            # my $oldmdl = mdlkeeper->get_module($old->get_modulenm);
+            # my $newmdl = mdlkeeper->get_module($new->get_modulenm);
             # if ( ! $oldmdl ) {
             #     $old->set_modulenm($new->get_modulenm);
             # }

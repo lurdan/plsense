@@ -5,6 +5,7 @@ use strict;
 use warnings;
 use Class::Std;
 use PlSense::Logger;
+use PlSense::Util;
 {
     sub is_only_valid_context {
         my ($self, $code, $tok) = @_;
@@ -16,23 +17,23 @@ use PlSense::Logger;
         }
         if ( ! $tok || ! $tok->isa("PPI::Token::Operator") || $tok->content ne '->' ) { return; }
         my @tokens = $self->get_valid_tokens($tok);
-        my $addr = $self->get_addrfinder->find_address(@tokens) or return;
+        my $addr = addrfinder->find_address(@tokens) or return;
         $self->set_input($input);
         logger->info("Match context : input[$input] addr[$addr]");
 
-        my $entity = $self->get_addrrouter->resolve_address($addr);
+        my $entity = addrrouter->resolve_address($addr);
         if ( ! $entity || ! $entity->isa("PlSense::Entity::Instance") ) {
             logger->info("Can't get instance entity from [$addr]");
             return 1;
         }
-        my $mdl = $self->get_mdlkeeper->get_module( $entity->get_modulenm );
+        my $mdl = mdlkeeper->get_module( $entity->get_modulenm );
         if ( ! $mdl ) {
             logger->info("Can't get module of [".$entity->get_modulenm."]");
             return 1;
         }
 
         logger->notice("Found instance method of [".$mdl->get_name."]");
-        my $currmdl = $self->get_currentmodule;
+        my $currmdl = addrfinder->get_currentmodule;
         INSTANCE_METHOD:
         foreach my $mtd ( $mdl->get_instance_methods($currmdl) ) {
             $self->push_candidate($mtd->get_name, $mtd);

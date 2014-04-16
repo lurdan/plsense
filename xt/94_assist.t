@@ -4,12 +4,10 @@ use List::AllUtils qw{ first };
 use lib "$FindBin::Bin/../tlib";
 use TestSupport;
 
-my $workpath = get_work_dir();
-my $addpath = "PATH=$FindBin::Bin/../blib/script:$FindBin::Bin/../bin:\${PATH} ; export PATH";
-my $chhome = "HOME=$workpath ; export HOME";
-
-system "$addpath ; $chhome ; plsense svstart > /dev/null";
-ok(is_running(), "start server process") or done_mytest();
+my $wait = wait_fin_timeout() || "";
+ok($wait, "wait $wait for network timeout") or done_mytest();
+run_plsense_testcmd("svstart > /dev/null");
+ok(is_server_running(), "start server process") or done_mytest();
 
 my @testsrc = grep { -f $_ } @ARGV;
 if ( $#testsrc < 0 ) { @testsrc = split m{ : }xms, $ENV{PLSENSE_TEST_SOURCE}; }
@@ -19,20 +17,11 @@ my ($fh, $cmdret);
 SOURCE:
 foreach my $f ( @testsrc ) {
 
-    my $openret = qx{ $addpath ; $chhome ; plsense open '$f' };
+    my $openret = get_plsense_testcmd_result("open '$f'");
     chomp $openret;
     is($openret, "Done", "do open $f") or next SOURCE;
 
-    my $count = 0;
-    WAIT_IDLE:
-    while ( $count < 120 ) {
-        my $ps = qx{ $addpath ; $chhome ; plsense ps };
-        $ps =~ s{ ^\s+ }{}xms;
-        $ps =~ s{ \s+$ }{}xms;
-        if ( ! $ps && is_running() ) { last WAIT_IDLE; }
-        sleep 1;
-        $count++;
-    }
+    wait_fin_task(1, 120);
 
     open $fh, '<', "$f";
     ok($fh, "open test source : $f") or done_mytest();
@@ -46,14 +35,14 @@ foreach my $f ( @testsrc ) {
 
         if ( $line =~ m{ ^ package \s+ ([a-zA-Z0-9:]+) }xms ) {
             my $pkgnm = $1;
-            $cmdret = qx{ $addpath ; $chhome ; plsense onmod $pkgnm };
+            $cmdret = get_plsense_testcmd_result("onmod $pkgnm");
             chomp $cmdret;
             is($cmdret, "Done", "set current module to $pkgnm") or last LINE;
         }
 
         elsif ( $line =~ m{ ^ sub \s+ ([^\s]+) }xms ) {
             my $subnm = $1;
-            $cmdret = qx{ $addpath ; $chhome ; plsense onsub $subnm };
+            $cmdret = get_plsense_testcmd_result("onsub $subnm");
             chomp $cmdret;
             is($cmdret, "Done", "set current method to $subnm") or last LINE;
         }
@@ -67,16 +56,16 @@ foreach my $f ( @testsrc ) {
         elsif ( $line =~ m{ ^ \# \s* aend \s+ ([a-z]+): \s* (.*) \s* $ }xms ) {
             ($testmethod, $expected) = ($1, $2);
             $readcode = 0;
-            $cmdret = qx{ $addpath ; $chhome ; plsense assist '$testcode' };
+            $cmdret = get_plsense_testcmd_result("assist '$testcode'");
             $cmdret =~ s{ \n+ }{ }xmsg;
             $cmdret =~ s{ \s+ }{ }xmsg;
             $cmdret =~ s{ \A \s+ }{}xms;
             $cmdret =~ s{ \s+ \z }{}xms;
+            my @rets = split m{ \s+ }xms, $cmdret;
             if ( $testmethod eq "equal" ) {
                 is($cmdret, $expected, "assist check $testmethod $testdesc");
             }
             elsif ( $testmethod eq "include" ) {
-                my @rets = split m{ \s+ }xms, $cmdret;
                 my $include = 1;
                 EXPECT:
                 foreach my $e ( split m{ \s+ }xms, $expected ) {
@@ -87,10 +76,10 @@ foreach my $f ( @testsrc ) {
                         last EXPECT;
                     }
                 }
-                ok($include, "assist check $testmethod $testdesc");
+                ok($include, "assist check $testmethod $testdesc") or
+                print STDERR "Got: ".join(", ", @rets)."\n";
             }
             elsif ( $testmethod eq "exclude" ) {
-                my @rets = split m{ \s+ }xms, $cmdret;
                 my $exclude = 1;
                 EXPECT:
                 foreach my $e ( split m{ \s+ }xms, $expected ) {
@@ -101,13 +90,14 @@ foreach my $f ( @testsrc ) {
                         last EXPECT;
                     }
                 }
-                ok($exclude, "assist check $testmethod $testdesc");
+                ok($exclude, "assist check $testmethod $testdesc") or
+                print STDERR "Got: ".join(", ", @rets)."\n";
             }
         }
 
         elsif ( $line =~ m{ ^ \# \s* ahelp \s+ ([^\s]+) \s+ : \s+ ([^\n]+) $ }xms ) {
             my ($cand, $regexp) = ($1, $2);
-            $cmdret = qx{ $addpath ; $chhome ; plsense assisthelp $cand };
+            $cmdret = get_plsense_testcmd_result("assisthelp $cand");
             if ( ! ok($cmdret =~ m{ $regexp }xms, "assist help $cand match '$regexp' at $testdesc") ) {
                 print STDERR "$cmdret";
             }
@@ -129,26 +119,9 @@ done_mytest();
 exit 0;
 
 
-sub is_running {
-    my ($stat, $mainstat, $workstat, $resolvestat);
-
-    $stat = qx{ $addpath ; $chhome ; plsense svstat };
-    $mainstat = $stat =~ m{ ^ Main \s+ Server \s+ is \s+ Running\. $ }xms;
-    $workstat = $stat =~ m{ ^ Work \s+ Server \s+ is \s+ Running\. $ }xms;
-    $resolvestat = $stat =~ m{ ^ Resolve \s+ Server \s+ is \s+ Running\. $ }xms;
-    return $mainstat && $workstat && $resolvestat ? 1 : 0;
-}
-
 sub done_mytest {
-    my ($stat, $mainstat, $substat);
-
-    system "$addpath ; $chhome ; plsense svstop > /dev/null";
-    $stat = qx{ $addpath ; $chhome ; plsense svstat };
-    $mainstat = $stat =~ m{ ^ Main \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    $workstat = $stat =~ m{ ^ Work \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    $resolvestat = $stat =~ m{ ^ Resolve \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    ok($mainstat && $workstat && $resolvestat, "stop server process");
-
+    run_plsense_testcmd("svstop > /dev/null");
+    ok(is_server_stopping(), "stop server process");
     done_testing();
     exit 0;
 }

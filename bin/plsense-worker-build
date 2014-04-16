@@ -2,12 +2,14 @@
 
 use strict;
 use warnings;
-use Getopt::Long;
+use Getopt::Long qw{:config posix_default no_ignore_case gnu_compat};
 use IO::Socket;
 use List::AllUtils qw{ uniq };
 use Try::Tiny;
 use PlSense::Logger;
+use PlSense::Configure;
 use PlSense::SocketClient;
+use PlSense::Util;
 use PlSense::Builtin;
 use PlSense::ModuleKeeper;
 use PlSense::AddressRouter;
@@ -19,85 +21,62 @@ use PlSense::ModuleBuilder::InheritBuilder;
 use PlSense::ModuleBuilder::DocBuilder;
 use PlSense::ModuleBuilder::PPIBuilder;
 
-my ($cachedir, $port1, $port2, $port3, $projectnm, $libpath, $mdl_or_file, $recursive, $force, $loglvl, $logfile);
-GetOptions ('cachedir=s'  => \$cachedir,
-            'port1=i'     => \$port1,
-            'port2=i'     => \$port2,
-            'port3=i'     => \$port3,
-            'projectnm=s' => \$projectnm,
-            'libpath=s'   => \$libpath,
-            'target=s'    => \$mdl_or_file,
-            'recursive'   => \$recursive,
-            'force'       => \$force,
-            'loglevel=s'  => \$loglvl,
-            'logfile=s'   => \$logfile,
-            );
+my ($cachedir, $port1, $port2, $port3, $confpath, $mdl_or_file, $recursive, $force, $loglvl, $logfile);
+GetOptions ('cachedir=s' => \$cachedir,
+            'port1=i'    => \$port1,
+            'port2=i'    => \$port2,
+            'port3=i'    => \$port3,
+            'confpath=s' => \$confpath,
+            'target=s'   => \$mdl_or_file,
+            'recursive'  => \$recursive,
+            'force'      => \$force,
+            'loglevel=s' => \$loglvl,
+            'logfile=s'  => \$logfile, );
 
 setup_logger($loglvl, $logfile);
 if ( ! -d $cachedir ) {
     logger->crit("Not exist cache directory [$cachedir]");
     exit 1;
 }
+set_primary_config( cachedir => $cachedir,
+                    port1    => $port1,
+                    port2    => $port2,
+                    port3    => $port3,
+                    loglevel => $loglvl,
+                    logfile  => $logfile, );
+setup_config($confpath) or exit 1;
 
-my $scli = PlSense::SocketClient->new({ mainport => $port1,
-                                        workport => $port2,
-                                        resolveport => $port3,
-                                        retryinterval => 0.5,
-                                        maxretry => 300 });
+set_builtin( PlSense::Builtin->new() );
+set_mdlkeeper( PlSense::ModuleKeeper->new() );
+set_addrrouter( PlSense::AddressRouter->new({ with_build => 1, }) );
+set_substkeeper( PlSense::SubstituteKeeper->new() );
+set_substbuilder( PlSense::SubstituteBuilder->new() );
 
-my $builtin = PlSense::Builtin->new({ cachedir => $cachedir });
-my $mdlkeeper = PlSense::ModuleKeeper->new({ cachedir => $cachedir });
-my $addrrouter = PlSense::AddressRouter->new({ cachedir => $cachedir,
-                                               mdlkeeper => $mdlkeeper,
-                                               with_build => 1, });
-my $substkeeper = PlSense::SubstituteKeeper->new({ cachedir => $cachedir,
-                                                   mdlkeeper => $mdlkeeper,
-                                                   addrrouter => $addrrouter, });
-my $substbuilder = PlSense::SubstituteBuilder->new({ builtin => $builtin,
-                                                     mdlkeeper => $mdlkeeper,
-                                                     substkeeper => $substkeeper });
-
-my $srcupdater = PlSense::ModuleSrcUpdater->new({ mdlkeeper => $mdlkeeper });
-my $xrefbuilder = PlSense::ModuleBuilder::XrefBuilder->new({ builtin => $builtin,
-                                                             mdlkeeper => $mdlkeeper,
-                                                             substkeeper => $substkeeper,
-                                                             substbuilder => $substbuilder,
-                                                             libpath => $libpath });
-my $inheritbuilder = PlSense::ModuleBuilder::InheritBuilder->new({ builtin => $builtin,
-                                                                   mdlkeeper => $mdlkeeper,
-                                                                   substkeeper => $substkeeper,
-                                                                   substbuilder => $substbuilder,
-                                                                   libpath => $libpath });
-my $docbuilder = PlSense::ModuleBuilder::DocBuilder->new({ builtin => $builtin,
-                                                           mdlkeeper => $mdlkeeper,
-                                                           substkeeper => $substkeeper,
-                                                           substbuilder => $substbuilder,
-                                                           libpath => $libpath });
-my $ppibuilder = PlSense::ModuleBuilder::PPIBuilder->new({ builtin => $builtin,
-                                                           mdlkeeper => $mdlkeeper,
-                                                           substkeeper => $substkeeper,
-                                                           substbuilder => $substbuilder,
-                                                           libpath => $libpath });
+my $scli           = PlSense::SocketClient->new({ retryinterval => 0.5, maxretry => 300 });
+my $srcupdater     = PlSense::ModuleSrcUpdater->new();
+my $xrefbuilder    = PlSense::ModuleBuilder::XrefBuilder->new();
+my $inheritbuilder = PlSense::ModuleBuilder::InheritBuilder->new();
+my $docbuilder     = PlSense::ModuleBuilder::DocBuilder->new();
+my $ppibuilder     = PlSense::ModuleBuilder::PPIBuilder->new();
 my (@builtmdls, @builtmdlkeys, @extmdls);
 
-$SIG{INT} = sub { logger->notice("Receive SIGINT"); interrupt_build(); exit 0; };
-$SIG{QUIT} = sub { logger->notice("Receive SIGQUIT"); interrupt_build(); exit 0; };
+$SIG{INT}  = sub { logger->notice("Receive SIGINT");  interrupt_build(); exit 0; };
 $SIG{TERM} = sub { logger->notice("Receive SIGTERM"); interrupt_build(); exit 0; };
 
 try {
-    if ( ! $projectnm ) { $projectnm = $mdlkeeper->get_default_project_name; }
-    $builtin->build();
-    $mdlkeeper->set_project($projectnm);
-    $addrrouter->set_project($projectnm);
-    $substkeeper->set_project($projectnm);
+    builtin->setup_without_reload();
+    builtin->build();
+    mdlkeeper->setup_without_reload();
+    addrrouter->setup_without_reload();
+    substkeeper->setup_without_reload();
 
     my ($filepath, $mdl);
     if ( -f $mdl_or_file ) {
         $filepath = $mdl_or_file;
-        $mdl = $mdlkeeper->get_module("main", $filepath);
+        $mdl = mdlkeeper->get_module("main", $filepath);
     }
     else {
-        $mdl = $mdlkeeper->get_module($mdl_or_file);
+        $mdl = mdlkeeper->get_module($mdl_or_file);
         if ( ! $mdl ) {
             logger->warn("Not found module named [$mdl_or_file]");
             finish_build();
@@ -105,7 +84,7 @@ try {
         }
         $filepath = $mdl->get_filepath;
         if ( ! $filepath || ! -f $filepath ) {
-            $mdlkeeper->remove_module($mdl->get_name, $mdl->get_filepath, $mdl->get_projectnm);
+            mdlkeeper->remove_module($mdl->get_name, $mdl->get_filepath, $mdl->get_projectnm);
             finish_build();
             exit 1;
         }
@@ -120,21 +99,22 @@ try {
         exit 0;
     }
 
-    my $libopt = $libpath ? "-I'".$libpath."'" : "";
-    if ( system("perl $libopt -c '$filepath' 2>/dev/null") ) {
+    my $perl = get_config("perl");
+    my $libopt = get_config("lib-path") ? "-I'".get_config("lib-path")."'" : "";
+    if ( system("$perl $libopt -c '$filepath' 2>/dev/null") ) {
         logger->error("Failed compile '$filepath'");
         finish_build();
         exit 1;
     }
 
-    my @mdls = $srcupdater->update_or_create_modules($filepath, $mdl ? $mdl->get_projectnm : $projectnm);
+    my @mdls = $srcupdater->update_or_create_modules($filepath, $mdl ? $mdl->get_projectnm : get_config("name"));
     if ( ! -f $mdl_or_file ) { @mdls = ($mdl); }
 
     MDL:
     foreach my $mdl ( @mdls ) {
 
         my $mdlkey = $mdl->get_name eq "main" ? $mdl->get_filepath : $mdl->get_name;
-        $substkeeper->reset;
+        substkeeper->reset;
 
         logger->notice("Start build [".$mdl->get_name."] : XRef part");
         $xrefbuilder->build($mdl);
@@ -149,9 +129,9 @@ try {
 
         $mdl->set_source(undef);
         $mdl->initialized;
-        $mdlkeeper->store_module($mdl);
-        $substkeeper->resolve_unknown_argument;
-        $substkeeper->store($mdl->get_name, $mdl->get_filepath, $mdl->get_projectnm);
+        mdlkeeper->store_module($mdl);
+        substkeeper->resolve_unknown_argument;
+        substkeeper->store($mdl->get_name, $mdl->get_filepath, $mdl->get_projectnm);
         push @builtmdls, $mdl;
         push @builtmdlkeys, $mdlkey;
         push @extmdls, get_extmodules($mdl);
@@ -198,7 +178,7 @@ sub get_extmodules {
     PARENT:
     for my $i ( 1..$mdl->count_parent ) {
         my $parent = $mdl->get_parent($i);
-        my $m = $mdlkeeper->get_module($parent->get_name);
+        my $m = mdlkeeper->get_module($parent->get_name);
         if ( $m->is_initialized ) {
             push @ret, get_extmodules($m, $found_is);
         }
@@ -209,7 +189,7 @@ sub get_extmodules {
     USINGMODULE:
     for my $i ( 1..$mdl->count_usingmdl ) {
         my $usingmdl = $mdl->get_usingmdl($i);
-        my $m = $mdlkeeper->get_module($usingmdl->get_name);
+        my $m = mdlkeeper->get_module($usingmdl->get_name);
         if ( $m->is_initialized ) {
             push @ret, get_extmodules($m, $found_is);
         }
@@ -225,7 +205,7 @@ sub interrupt_build {
     BUILTMDL:
     foreach my $mdl ( @builtmdls ) {
         $mdl->uninitialized;
-        $mdlkeeper->store_module($mdl);
+        mdlkeeper->store_module($mdl);
     }
 }
 

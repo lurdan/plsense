@@ -3,8 +3,9 @@ package PlSense::Symbol::Module;
 use parent qw{ PlSense::Symbol };
 use strict;
 use warnings;
-use List::AllUtils qw{ first uniq };
 use Class::Std::Storable;
+use List::AllUtils qw{ first uniq firstidx };
+use Scalar::Util qw{ weaken };
 use PlSense::Logger;
 {
     my %filepath_of :ATTR( :init_arg<filepath> );
@@ -22,8 +23,15 @@ use PlSense::Logger;
     sub is_initialized { my ($self) = @_; return $initialized_is{ident $self}; }
 
     my %parents_of :ATTR();
+    sub update_parent {
+        my ($self) = @_;
+        DELETE_INVALID:
+        while ( ( my $idx = firstidx { ! $_ } @{$parents_of{ident $self}} ) >= 0 ) {
+            splice @{$parents_of{ident $self}}, $idx, 1;
+        }
+    }
     sub push_parent {
-        my ($self, $parent) = @_;
+        my ($self, $parent, $not_weaken) = @_;
         if ( ! $parent || ! $parent->isa("PlSense::Symbol::Module") ) {
             logger->error("Not PlSense::Symbol::Module");
             return;
@@ -33,8 +41,13 @@ use PlSense::Logger;
             return;
         }
         push @{$parents_of{ident $self}}, $parent;
+        if ( ! $not_weaken ) { weaken @{$parents_of{ident $self}}[-1]; }
     }
-    sub count_parent { my ($self) = @_; return $#{$parents_of{ident $self}} + 1; }
+    sub count_parent {
+        my ($self) = @_;
+        $self->update_parent;
+        return $#{$parents_of{ident $self}} + 1;
+    }
     sub get_parent {
         my ($self, $index) = @_;
         if ( $index !~ m{ ^\d+$ }xms ) {
@@ -49,14 +62,21 @@ use PlSense::Logger;
     }
     sub exist_parent {
         my ($self, $mdlnm) = @_;
-        my @ret = grep { $_->get_name() eq $mdlnm } @{$parents_of{ident $self}};
+        my @ret = grep { $_ && $_->get_name eq $mdlnm } @{$parents_of{ident $self}};
         return $#ret >= 0 ? 1 : 0;
     }
     sub reset_parent { my ($self) = @_; $parents_of{ident $self} = []; }
 
     my %usingmdls_of :ATTR();
+    sub update_usingmdl {
+        my ($self) = @_;
+        DELETE_INVALID:
+        while ( ( my $idx = firstidx { ! $_ } @{$usingmdls_of{ident $self}} ) >= 0 ) {
+            splice @{$usingmdls_of{ident $self}}, $idx, 1;
+        }
+    }
     sub push_usingmdl {
-        my ($self, $usingmdl) = @_;
+        my ($self, $usingmdl, $not_weaken) = @_;
         if ( ! $usingmdl || ! $usingmdl->isa("PlSense::Symbol::Module") ) {
             logger->error("Not PlSense::Symbol::Module");
             return;
@@ -66,8 +86,13 @@ use PlSense::Logger;
             return;
         }
         push @{$usingmdls_of{ident $self}}, $usingmdl;
+        if ( ! $not_weaken ) { weaken @{$usingmdls_of{ident $self}}[-1]; }
     }
-    sub count_usingmdl { my ($self) = @_; return $#{$usingmdls_of{ident $self}} + 1; }
+    sub count_usingmdl {
+        my ($self) = @_;
+        $self->update_usingmdl;
+        return $#{$usingmdls_of{ident $self}} + 1;
+    }
     sub get_usingmdl {
         my ($self, $index) = @_;
         if ( $index !~ m{ ^\d+$ }xms ) {
@@ -82,14 +107,21 @@ use PlSense::Logger;
     }
     sub exist_usingmdl {
         my ($self, $mdlnm) = @_;
-        my @ret = grep { $_->get_name() eq $mdlnm } @{$usingmdls_of{ident $self}};
+        my @ret = grep { $_ && $_->get_name eq $mdlnm } @{$usingmdls_of{ident $self}};
         return $#ret >= 0 ? 1 : 0;
     }
     sub reset_usingmdl { my ($self) = @_; $usingmdls_of{ident $self} = []; }
 
     my %bundlemdls_of :ATTR( :default(undef) );
+    sub update_bundlemdl {
+        my ($self) = @_;
+        DELETE_INVALID:
+        while ( ( my $idx = firstidx { ! $_ } @{$bundlemdls_of{ident $self}} ) >= 0 ) {
+            splice @{$bundlemdls_of{ident $self}}, $idx, 1;
+        }
+    }
     sub push_bundlemdl {
-        my ($self, $bundlemdl) = @_;
+        my ($self, $bundlemdl, $not_weaken) = @_;
         if ( ! $bundlemdl || ! $bundlemdl->isa("PlSense::Symbol::Module") ) {
             logger->error("Not PlSense::Symbol::Module");
             return;
@@ -99,8 +131,13 @@ use PlSense::Logger;
             return;
         }
         push @{$bundlemdls_of{ident $self}}, $bundlemdl;
+        if ( ! $not_weaken ) { weaken @{$bundlemdls_of{ident $self}}[-1]; }
     }
-    sub count_bundlemdl { my ($self) = @_; return $#{$bundlemdls_of{ident $self}} + 1; }
+    sub count_bundlemdl {
+        my ($self) = @_;
+        $self->update_bundlemdl;
+        return $#{$bundlemdls_of{ident $self}} + 1;
+    }
     sub get_bundlemdl {
         my ($self, $index) = @_;
         if ( ! $index || $index !~ m{ ^\d+$ }xms ) {
@@ -111,11 +148,11 @@ use PlSense::Logger;
             logger->warn("Out of Index");
             return;
         }
-        return $bundlemdls_of{ident $self}->[$index - 1];
+        return @{$bundlemdls_of{ident $self}}[$index - 1];
     }
     sub exist_bundlemdl {
         my ($self, $mdlnm) = @_;
-        my @ret = grep { $_->get_name() eq $mdlnm } @{$bundlemdls_of{ident $self}};
+        my @ret = grep { $_ && $_->get_name eq $mdlnm } @{$bundlemdls_of{ident $self}};
         return $#ret >= 0 ? 1 : 0;
     }
     sub reset_bundlemdl { my ($self) = @_; $bundlemdls_of{ident $self} = []; }
@@ -266,7 +303,8 @@ use PlSense::Logger;
         $ret .= "PARENT: ";
         $first = 1;
         PARENT:
-        foreach my $mdl ( @{$parents_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_parent; $i++ ) {
+            my $mdl = $self->get_parent($i);
             if ( ! $first ) { $ret .= ", "; }
             $first = 0;
             $ret .= $mdl->get_name;
@@ -278,7 +316,8 @@ use PlSense::Logger;
         $ret .= "INCLUDE: ";
         $first = 1;
         USINGMDL:
-        foreach my $mdl ( @{$usingmdls_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+            my $mdl = $self->get_usingmdl($i);
             if ( ! $first ) { $ret .= ", "; }
             $first = 0;
             $ret .= $mdl->get_name;
@@ -348,7 +387,8 @@ use PlSense::Logger;
         my ($self, $only_name) = @_;
         my %mtd_of;
         PARENT:
-        foreach my $parent ( @{$parents_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_parent; $i++ ) {
+            my $parent = $self->get_parent($i);
             PARENTMTD:
             foreach my $mtd ( $parent->get_not_private_methods ) {
                 if ( exists $mtd_of{$mtd->get_name} ) { next PARENTMTD; }
@@ -375,7 +415,8 @@ use PlSense::Logger;
             $mtd_of{$mtdnm} = $mtd;
         }
         PARENT:
-        foreach my $parent ( @{$parents_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_parent; $i++ ) {
+            my $parent = $self->get_parent($i);
             PARENTMTD:
             foreach my $mtd ( $parent->get_public_methods ) {
                 if ( exists $mtd_of{$mtd->get_name} ) { next PARENTMTD; }
@@ -463,7 +504,8 @@ use PlSense::Logger;
             if ( $mtd->is_reserved ) { next IMPORTMTD; }
             if ( exists $mtd_of{$mtdnm} ) { next IMPORTMTD; }
             USINGMDL:
-            foreach my $m ( @{$usingmdls_of{ident $self}} ) {
+            for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+                my $m = $self->get_usingmdl($i);
                 if ( ! $m->exist_method($mtdnm) ) { next USINGMDL; }
                 my $extmtd = $m->get_method($mtdnm);
                 if ( $extmtd->is_importive ) { next USINGMDL; }
@@ -509,7 +551,8 @@ use PlSense::Logger;
             my $mtdnm = $mtd->get_name;
             if ( $mtd->is_importive ) {
                 USINGMDL:
-                foreach my $m ( @{$usingmdls_of{ident $self}} ) {
+                for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+                    my $m = $self->get_usingmdl($i);
                     if ( ! $m->exist_method($mtdnm) ) { next USINGMDL; }
                     my $extmtd = $m->get_method($mtdnm);
                     # if ( $extmtd->is_importive ) { next USINGMDL; }
@@ -539,7 +582,8 @@ use PlSense::Logger;
         my ($self, $only_name) = @_;
         my %mtd_of;
         USINGMDL:
-        foreach my $m ( @{$usingmdls_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+            my $m = $self->get_usingmdl($i);
             MTD:
             foreach my $mtd ( $m->get_public_methods ) {
                 if ( exists $mtd_of{$mtd->get_fullnm} ) { next MTD; }
@@ -561,7 +605,19 @@ use PlSense::Logger;
 
     sub get_any_method {
         my ($self, $mtdnm) = @_;
-        return first { $mtdnm && $_->get_name eq $mtdnm } $self->get_any_methods;
+        if ( ! $mtdnm ) { return; }
+        if ( $mtdnm =~ s{ \A SUPER:: }{}xms ) {
+            PARENT:
+            for my $i ( 1..$self->count_parent ) {
+                my $parent = $self->get_parent($i);
+                # I'm not sure which method is right, get_any_method, get_instance_method.
+                my $mtd = $parent->get_any_method($mtdnm) or next PARENT;
+                return $mtd;
+            }
+        }
+        else {
+            return first { $_->get_name eq $mtdnm } $self->get_any_methods;
+        }
     }
 
     sub get_any_original_method {
@@ -569,7 +625,8 @@ use PlSense::Logger;
         my $mtd = $self->get_any_method($mtdnm) or return;
         if ( ! $mtd->is_importive ) { return $mtd; }
         USINGMDL:
-        foreach my $m ( @{$usingmdls_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+            my $m = $self->get_usingmdl($i);
             if ( ! $m->exist_method($mtdnm) ) { next USINGMDL; }
             my $extmtd = $m->get_method($mtdnm);
             # if ( $extmtd->is_importive ) { next USINGMDL; }
@@ -699,7 +756,8 @@ use PlSense::Logger;
         my ($self, $type, $only_name) = @_;
         my %var_of;
         USINGMDL:
-        foreach my $m ( @{$usingmdls_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_usingmdl; $i++ ) {
+            my $m = $self->get_usingmdl($i);
             VAR:
             foreach my $var ( $m->get_public_variables($type, 0) ) {
                 if ( $type && $var->get_type ne $type ) { next VAR; }
@@ -719,7 +777,8 @@ use PlSense::Logger;
         my ($self, $only_name) = @_;
         my @ret;
         PARENT:
-        foreach my $parent ( @{$parents_of{ident $self}} ) {
+        for ( my $i = 1; $i <= $self->count_parent; $i++ ) {
+            my $parent = $self->get_parent($i);
             push @ret, $parent;
             push @ret, $parent->get_all_parents;
         }

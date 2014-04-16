@@ -7,38 +7,47 @@ use Class::Std;
 use List::AllUtils qw{ uniq };
 use Try::Tiny;
 use PlSense::Logger;
+use PlSense::Configure;
 {
     my %cache_of :ATTR( :default(undef) );
     my %projcache_of :ATTR( :default(undef) );
     my %moduleh_of :ATTR();
     my %projmoduleh_of :ATTR();
+    my %current_local_is :ATTR();
 
     sub START {
         my ($class, $ident, $arg_ref) = @_;
-        $cache_of{$ident} = $class->new_cache('Module');
-        $projcache_of{$ident} = $class->new_cache('Module.'.$class->get_default_project_name);
+        $cache_of{$ident} = $class->new_cache('IModule');
+        $projcache_of{$ident} = $class->new_cache('Module.'.$class->get_project());
         $class->reset;
     }
 
-    sub set_project {
-        my ($self, $projectnm) = @_;
-        $self->SUPER::set_project($projectnm) or return;
-        my $nextns = "Module.".$projectnm;
-        $projcache_of{ident $self}->set_namespace($nextns);
+    sub setup_without_reload {
+        my $self = shift;
+        $self->update_project();
+        my $projnm = $self->get_project();
+        my $local = get_config("local");
+        $cache_of{ident $self}->set_namespace( $local ? "IModule.$projnm" : "IModule" );
+        $projcache_of{ident $self}->set_namespace("Module.$projnm");
+        $current_local_is{ident $self} = $local;
     }
 
-    sub switch_project {
-        my ($self, $projectnm) = @_;
+    sub setup {
+        my $self = shift;
+        my $force = shift || 0;
 
-        if ( ! $projectnm ) { return; }
-        if ( $projectnm eq $self->get_project() ) {
-            logger->info("No need switch project data from [$projectnm]");
+        my $projnm = get_config("name");
+        if ( ! $force && $projnm eq $self->get_project() ) {
+            logger->info("No need switch project data from [$projnm]");
             return;
         }
 
-        logger->info("Switch project data to [$projectnm]");
-        $self->set_project($projectnm);
-        $self->remove_project_memory();
+        logger->info("Switch project data to [$projnm]");
+        my $local = get_config("local");
+        if ( $current_local_is{ident $self} || $local ) { $self->reset_installed_memory(); }
+        $self->reset_project_memory();
+        $self->setup_without_reload();
+        # Loading is entrusted to server process
         return 1;
     }
 
@@ -77,7 +86,7 @@ use PlSense::Logger;
 
     sub remove_project_all_module {
         my ($self) = @_;
-        $self->remove_project_memory();
+        $self->reset_project_memory();
         try   { $projcache_of{ident $self}->clear; }
         catch { $projcache_of{ident $self}->clear; };
         logger->info("Removed all project module info of [".$projcache_of{ident $self}->get_namespace."]");
@@ -95,9 +104,8 @@ use PlSense::Logger;
 
     sub reset {
         my $self = shift;
-        $moduleh_of{ident $self} = {};
-        $projmoduleh_of{ident $self} = {};
-        return;
+        $self->reset_installed_memory();
+        $self->reset_project_memory();
     }
 
     sub get_module {
@@ -152,8 +160,9 @@ use PlSense::Logger;
 
     sub get_packages {
         my ($self) = @_;
-        my @mdls = ( values( %{$projmoduleh_of{ident $self}} ),
-                     values( %{$moduleh_of{ident $self}} ) );
+        my @mdlkeys = uniq ( keys( %{$projmoduleh_of{ident $self}} ),
+                             keys( %{$moduleh_of{ident $self}} ) );
+        my @mdls = map { $projmoduleh_of{ident $self}->{$_} || $moduleh_of{ident $self}->{$_} } @mdlkeys;
         return sort { $a->get_name cmp $b->get_name } grep { $_->get_name ne "main" } @mdls;
     }
 
@@ -170,7 +179,13 @@ use PlSense::Logger;
     }
 
 
-    sub remove_project_memory : PRIVATE {
+    sub reset_installed_memory : PRIVATE {
+        my ($self) = @_;
+        $moduleh_of{ident $self} = {};
+        return;
+    }
+
+    sub reset_project_memory : PRIVATE {
         my ($self) = @_;
         $projmoduleh_of{ident $self} = {};
         return;
@@ -202,11 +217,11 @@ use PlSense::Logger;
         $mdl->reset_bundlemdl;
 
         PARENT:
-        foreach my $parent ( @parents ) { $mdl->push_parent($parent); }
+        foreach my $parent ( @parents ) { $mdl->push_parent($parent, 1); }
         USINGMODULE:
-        foreach my $usingmdl ( @usingmdls ) { $mdl->push_usingmdl($usingmdl); }
+        foreach my $usingmdl ( @usingmdls ) { $mdl->push_usingmdl($usingmdl, 1); }
         BUNDLEMODULE:
-        foreach my $bundlemdl ( @bundlemdls ) { $mdl->push_bundlemdl($bundlemdl); }
+        foreach my $bundlemdl ( @bundlemdls ) { $mdl->push_bundlemdl($bundlemdl, 1); }
 
         my $key = $self->get_cache_key($mdl->get_name, $mdl->get_filepath);
         if ( $mdl->get_projectnm ) {
@@ -241,7 +256,10 @@ use PlSense::Logger;
                                      || $cache_of{ident $self}->get($key);
         } catch {
         };
-        if ( ! $cachemdl || ! $cachemdl->isa("PlSense::Symbol::Module") ) { return; }
+        if ( ! $cachemdl || ! $cachemdl->isa("PlSense::Symbol::Module") ) {
+            logger->warn("Failed load cached module data of $key");
+            return;
+        }
 
         my $mdl = $cachemdl->get_projectnm ? $projmoduleh_of{ident $self}->{$key}
                 :                            $moduleh_of{ident $self}->{$key};

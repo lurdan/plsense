@@ -1,96 +1,86 @@
 use Test::More;
 use FindBin;
-use List::AllUtils qw{ first };
 use lib "$FindBin::Bin/../tlib";
 use TestSupport;
 
-my $workpath = get_work_dir();
-my $addpath = "PATH=$FindBin::Bin/../blib/script:$FindBin::Bin/../bin:\${PATH} ; export PATH";
-my $chhome = "HOME=$workpath ; export HOME";
+my $wait = wait_fin_timeout() || "";
+ok($wait, "wait $wait for network timeout") or done_mytest();
+run_plsense_testcmd("svstart > /dev/null");
+ok(is_server_running(), "start server process") or done_mytest();
 
-system "$addpath ; $chhome ; plsense svstart > /dev/null";
-ok(is_running(), "start server process") or done_mytest();
-
-my @testsrc = grep { -f $_ } @ARGV;
-if ( $#testsrc < 0 ) {
-    @testsrc = glob("$FindBin::Bin/sample/*.pl");
+my @testsrcs;
+if ( @testsrcs = grep { -f $_ } @ARGV ) {
+    do_build_test(\@testsrcs, undef, 1, undef);
 }
-
-BUILD:
-foreach my $f ( @testsrc ) {
-    system "$addpath ; $chhome ; plsense open '$f' > /dev/null";
-    sleep 1;
+elsif ( @testsrcs = split m{ : }xms, $ENV{PLSENSE_TEST_SOURCE} ) {
+    do_build_test(\@testsrcs, undef, 0, undef);
 }
-
-my $count = 0;
-WAIT_IDLE:
-while ( $count < 200 ) {
-    my $ps = qx{ $addpath ; $chhome ; plsense ps };
-    $ps =~ s{ ^\s+ }{}xms;
-    $ps =~ s{ \s+$ }{}xms;
-    if ( ! $ps ) { last WAIT_IDLE; }
-    sleep 5;
-    $count++;
-}
-
-if ( $#testsrc == 0 ) {
-    system "$addpath ; $chhome ; plsense update '".$testsrc[0]."' > /dev/null";
-    my $count = 0;
-    WAIT_IDLE:
-    while ( $count < 60 ) {
-        my $ps = qx{ $addpath ; $chhome ; plsense ps };
-        $ps =~ s{ ^\s+ }{}xms;
-        $ps =~ s{ \s+$ }{}xms;
-        if ( ! $ps ) { last WAIT_IDLE; }
-        sleep 2;
-        $count++;
+else {
+    PROJ:
+    foreach my $projdir ( "sample", "sample2", "sample3" ) {
+        @testsrcs = glob("$FindBin::Bin/$projdir/*.pl");
+        my @usingmdls = used_modules($projdir);
+        do_build_test(\@testsrcs, \@usingmdls, 0, $projdir);
     }
 }
-
-CHK_READY:
-foreach my $f ( @testsrc ) {
-    my $readyret = qx{ $addpath ; $chhome ; plsense ready '$f' };
-    chomp $readyret;
-    is($readyret, "Yes", "check ready $f");
-}
-
-if ( $#testsrc > 0 ) {
-    my $readyret = qx{ $addpath ; $chhome ; plsense ready };
-    $readyret =~ s{ \n }{ }xmsg;
-    my @readys = split m{ \s+ }xms, $readyret;
-    CHK_READY:
-    foreach my $pkgnm ( qw{ IO::File FindBin File::Spec ClassStdParent IO::Handle Class::Std } ) {
-        my $include = first { $_ eq $pkgnm } @readys;
-        ok($include, "build sample : $pkgnm");
-    }
-}
-
 
 done_mytest();
 exit 0;
 
 
-sub is_running {
-    my ($stat, $mainstat, $workstat, $resolvestat);
-
-    $stat = qx{ $addpath ; $chhome ; plsense svstat };
-    $mainstat = $stat =~ m{ ^ Main \s+ Server \s+ is \s+ Running\. $ }xms;
-    $workstat = $stat =~ m{ ^ Work \s+ Server \s+ is \s+ Running\. $ }xms;
-    $resolvestat = $stat =~ m{ ^ Resolve \s+ Server \s+ is \s+ Running\. $ }xms;
-    return $mainstat && $workstat && $resolvestat ? 1 : 0;
-}
-
 sub done_mytest {
-    my ($stat, $mainstat, $substat);
-
-    system "$addpath ; $chhome ; plsense svstop > /dev/null";
-    $stat = qx{ $addpath ; $chhome ; plsense svstat };
-    $mainstat = $stat =~ m{ ^ Main \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    $workstat = $stat =~ m{ ^ Work \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    $resolvestat = $stat =~ m{ ^ Resolve \s+ Server \s+ is \s+ Not \s+ running\. $ }xms;
-    ok($mainstat && $workstat && $resolvestat, "stop server process");
-
+    run_plsense_testcmd("svstop > /dev/null");
+    ok(is_server_stopping(), "stop server process");
     done_testing();
     exit 0;
+}
+
+sub do_build_test {
+    my $testsrcs = shift or return;
+    my $waited_modules = shift || [];
+    my $update = shift || 0;
+    my $test_ident = shift || "NoIdent";
+
+    SRC:
+    foreach my $f ( @{$testsrcs} ) {
+        run_plsense_testcmd("open '$f' > /dev/null");
+        wait_ready($f, 3, 40);
+    }
+
+    if ( $update ) {
+        SRC:
+        foreach my $f ( @{$testsrcs} ) {
+            run_plsense_testcmd("update '$f' > /dev/null");
+            wait_ready($f, 3, 40);
+        }
+    }
+
+    WAIT_MDL_READY:
+    for ( my $i = 0; $i <= 100; $i++ ) {
+        my @readys = split m{ \s+ }xms, get_plsense_testcmd_result("ready");
+        my $notyet = 0;
+        MDL:
+        foreach my $mdl ( @{$waited_modules} ) {
+            if ( ! grep { $_ eq $mdl } @readys ) {
+                $notyet = 1;
+                last MDL;
+            }
+        }
+        if ( ! $notyet ) { last WAIT_MDL_READY; }
+        sleep 6;
+    }
+    wait_fin_task();
+
+    my $notready;
+    CHK_READY:
+    foreach my $f ( @{$testsrcs} ) {
+        my $readyret = get_plsense_testcmd_result("ready '$f'");
+        chomp $readyret;
+        is($readyret, "Yes", "check ready $f") or $notready = 1;
+    }
+    if ( $notready ) {
+        print STDERR "The result of ready in $test_ident\n".get_plsense_testcmd_result("ready")."\n";
+    }
+
 }
 

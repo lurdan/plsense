@@ -2,13 +2,13 @@
 
 use strict;
 use warnings;
-use Getopt::Long;
+use Getopt::Long qw{:config posix_default no_ignore_case gnu_compat};
 use IO::Socket;
-use File::Spec;
-use Config::Tiny;
 use Try::Tiny;
 use PlSense;
 use PlSense::Logger;
+use PlSense::Configure;
+use PlSense::Util;
 use PlSense::SocketClient;
 
 my %opthelp_of = ("-h, --help"        => "Show this message.",
@@ -287,44 +287,47 @@ my %function_of = (help         => \&show_help,
 
 my ($cachedir, $port1, $port2, $port3, $maxtasks, $loglvl, $logfile);
 my $interactive = 0;
-GetOptions ('help'        => sub { show_usage(); exit 0; },
-            'version'     => sub { print "PlSense version is $PlSense::VERSION\n"; exit 0; },
-            'cachedir=s'  => \$cachedir,
-            'port1=i'     => \$port1,
-            'port2=i'     => \$port2,
-            'port3=i'     => \$port3,
-            'maxtasks=i'  => \$maxtasks,
-            'loglevel=s'  => \$loglvl,
-            'logfile=s'   => \$logfile,
-            'interactive' => \$interactive,
-            );
+GetOptions ('help|h'        => sub { show_usage(); exit 0; },
+            'version|v'     => sub { print "PlSense version is $PlSense::VERSION\n"; exit 0; },
+            'cachedir|c=s'  => \$cachedir,
+            'port1=i'       => \$port1,
+            'port2=i'       => \$port2,
+            'port3=i'       => \$port3,
+            'maxtasks=i'    => \$maxtasks,
+            'loglevel=s'    => \$loglvl,
+            'logfile=s'     => \$logfile,
+            'interactive|i' => \$interactive, );
 
 setup_logger($loglvl, $logfile);
-if ( ! $cachedir ) {
-    logger->info("Read option from config file.");
-    create_config();
-    my $c = get_config();
-    if ( $c ) {
-        $cachedir = $c->{cachedir};
-        $port1 ||= $c->{port1};
-        $port2 ||= $c->{port2};
-        $port3 ||= $c->{port3};
-        $maxtasks ||= $c->{maxtasks};
-        $loglvl ||= $c->{loglevel};
-        $logfile ||= $c->{logfile};
-        setup_logger($loglvl, $logfile);
-    }
-}
 if ( ! $loglvl ) { $loglvl = ''; }
 if ( ! $logfile ) { $logfile = ''; }
-if ( ! $maxtasks || $maxtasks !~ m{ ^\d+$ }xms ) { $maxtasks = 20; }
 
-my $scli = PlSense::SocketClient->new({ mainport => $port1,
-                                        workport => $port2,
-                                        resolveport => $port3,
-                                        retryinterval => 0.2,
-                                        maxretry => 10 });
+if ( ! $cachedir ) {
+    logger->info("Read option from config file.");
+    setup_config("", 0, 1) or exit 1;
+    $cachedir   = get_config("cachedir");
+    $port1    ||= get_config("port1");
+    $port2    ||= get_config("port2");
+    $port3    ||= get_config("port3");
+    $maxtasks ||= get_config("maxtasks");
+    $loglvl   ||= get_config("loglevel") || "";
+    $logfile  ||= get_config("logfile") || "";
+    setup_logger($loglvl, $logfile);
+}
+set_primary_config( cachedir => $cachedir,
+                    port1    => $port1,
+                    port2    => $port2,
+                    port3    => $port3,
+                    maxtasks => $maxtasks,
+                    loglevel => $loglvl,
+                    logfile  => $logfile, );
+setup_config() or exit 1;
+
+my $scli = PlSense::SocketClient->new({ retryinterval => 0.2, maxretry => 10 });
 my %pid_of;
+
+$SIG{INT}  = sub { logger->notice("Receive SIGINT");  exit 0; };
+$SIG{TERM} = sub { logger->notice("Receive SIGTERM"); exit 0; };
 
 if ( $interactive ) {
 
@@ -427,14 +430,6 @@ sub show_help {
 }
 
 
-sub get_common_option {
-    my $ret = "--cachedir '$cachedir' --loglevel '$loglvl' --logfile '$logfile'";
-    $ret .= " --port1 ".$scli->get_mainport;
-    $ret .= " --port2 ".$scli->get_workport;
-    $ret .= " --port3 ".$scli->get_resolveport;
-    return $ret;
-}
-
 sub start_main_server {
     my $immediately = shift || 0;
     return start_server_sentinel("main", $immediately);
@@ -455,8 +450,8 @@ sub start_server_sentinel {
     if ( $pid && kill(0, $pid) ) { return 1; }
 
     if ( ! $immediately ) {
-        $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid", { ignore_error => 1, maxretry => 5 })
-             : $svtype eq "work"    ? $scli->get_work_server_response("pid", { ignore_error => 1, maxretry => 5 })
+        $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid",    { ignore_error => 1, maxretry => 5 })
+             : $svtype eq "work"    ? $scli->get_work_server_response("pid",    { ignore_error => 1, maxretry => 5 })
              : $svtype eq "resolve" ? $scli->get_resolve_server_response("pid", { ignore_error => 1, maxretry => 5 })
              :                        0;
         if ( $pid ) {
@@ -466,13 +461,13 @@ sub start_server_sentinel {
     }
 
     my $cmdnm = "plsense-server-".$svtype;
-    my $etcopt = $svtype eq "work" ? " --maxtasks $maxtasks" : "";
-    my $cmdstr = "$cmdnm ".get_common_option().$etcopt;
+    my $cmdstr = $cmdnm.get_common_option_string();
+    if ( $svtype eq "work" ) { $cmdstr .= " --maxtasks '".( get_config("maxtasks") || "" )."'"; }
     logger->info("Start server : $cmdstr");
     system "$cmdstr &";
 
-    $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid", { ignore_error => 1, maxretry => 10 })
-         : $svtype eq "work"    ? $scli->get_work_server_response("pid", { ignore_error => 1, maxretry => 10 })
+    $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid",    { ignore_error => 1, maxretry => 10 })
+         : $svtype eq "work"    ? $scli->get_work_server_response("pid",    { ignore_error => 1, maxretry => 10 })
          : $svtype eq "resolve" ? $scli->get_resolve_server_response("pid", { ignore_error => 1, maxretry => 10 })
          :                        0;
     if ( ! $pid || ! kill(0, $pid) ) { return 0; }
@@ -498,8 +493,8 @@ sub stop_server_sentinel {
         return 1;
     }
 
-    my $ret = $svtype eq "main"    ? $scli->request_main_server("stop", { ignore_error => 1, maxretry => 15 })
-            : $svtype eq "work"    ? $scli->request_work_server("stop", { ignore_error => 1, maxretry => 15 })
+    my $ret = $svtype eq "main"    ? $scli->request_main_server("stop",    { ignore_error => 1, maxretry => 15 })
+            : $svtype eq "work"    ? $scli->request_work_server("stop",    { ignore_error => 1, maxretry => 15 })
             : $svtype eq "resolve" ? $scli->request_resolve_server("stop", { ignore_error => 1, maxretry => 15 })
             :                        undef;
     if ( $ret ) {
@@ -508,8 +503,8 @@ sub stop_server_sentinel {
         return 1;
     }
     elsif ( $pid ) {
-        logger->info("Send SIGWINCH to $svtype");
-        kill 'WINCH', $pid;
+        logger->info("Send SIGTERM to $svtype");
+        kill 'TERM', $pid or logger->error("Failed kill $svtype server");
         $pid_of{$svtype} = undef;
         return 1;
     }
@@ -520,14 +515,14 @@ sub stop_server_sentinel {
 
 
 sub show_server_status {
-    my $mainstat = $scli->get_main_server_response("status", { ignore_error => 1, maxretry => 5 });
-    my $workstat = $scli->get_work_server_response("status", { ignore_error => 1, maxretry => 5 });
+    my $mainstat    = $scli->get_main_server_response("status",    { ignore_error => 1, maxretry => 5 });
+    my $workstat    = $scli->get_work_server_response("status",    { ignore_error => 1, maxretry => 5 });
     my $resolvestat = $scli->get_resolve_server_response("status", { ignore_error => 1, maxretry => 5 });
     chomp $mainstat;
     chomp $workstat;
     chomp $resolvestat;
-    if ( ! $mainstat ) { $mainstat = $pid_of{main} && kill(0, $pid_of{main}) ? "Busy" : "Not running"; }
-    if ( ! $workstat ) { $workstat = $pid_of{work} && kill(0, $pid_of{work}) ? "Busy" : "Not running"; }
+    if ( ! $mainstat )    { $mainstat    = $pid_of{main}    && kill(0, $pid_of{main})    ? "Busy" : "Not running"; }
+    if ( ! $workstat )    { $workstat    = $pid_of{work}    && kill(0, $pid_of{work})    ? "Busy" : "Not running"; }
     if ( ! $resolvestat ) { $resolvestat = $pid_of{resolve} && kill(0, $pid_of{resolve}) ? "Busy" : "Not running"; }
     my $ret = "Main Server is $mainstat.\n";
     $ret .= "Work Server is $workstat.\n";
@@ -536,6 +531,7 @@ sub show_server_status {
 }
 
 sub start_server {
+    my $cachedir = get_config("cachedir");
     if ( ! $cachedir ) {
         logger->fatal("Required information for cachedir. For more information, run 'plsense --help'");
         return;
@@ -559,50 +555,47 @@ sub stop_server {
 }
 
 sub refresh_server {
-    # SVTYPE:
-    # foreach my $svtype ( "main", "work", "resolve" ) {
-    #     my $pid = $pid_of{$svtype};
-    #     if ( ! $pid ) {
-    #         $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid", { maxretry => 20 })
-    #              : $svtype eq "work"    ? $scli->get_work_server_response("pid", { maxretry => 20 })
-    #              : $svtype eq "resolve" ? $scli->get_resolve_server_response("pid", { maxretry => 20 })
-    #              :                        0;
-    #         $pid_of{$svtype} = $pid;
-    #     }
-    #     if ( ! $pid ) { last SVTYPE; }
-    #     kill 'USR1', $pid;
-    # }
-
-    my $mainpid = $pid_of{main} || $scli->get_main_server_response("pid", { maxretry => 20 });
-    my $workpid = $pid_of{work} || $scli->get_work_server_response("pid", { maxretry => 20 });
-    my $resolvepid = $pid_of{resolve} || $scli->get_resolve_server_response("pid", { maxretry => 20 });
-    if ( ! $mainpid || ! $workpid || ! $resolvepid ) { return "Failed\n"; }
-
     my $loc = get_current_location() or return "Failed\n";
     my $currfilepath = $loc =~ m{ ^ File: \s+ ([^\n]*?) $ }xms ? $1 : "";
     my $currmdlnm = $loc =~ m{ ^ Module: \s+ ([^\n]*?) $ }xms ? $1 : "";
     my $currmtdnm = $loc =~ m{ ^ Sub: \s+ ([^\n]*?) $ }xms ? $1 : "";
 
-    kill 'WINCH', $mainpid;
-    WAIT:
-    for my $i ( 1..5 ) {
-        if ( ! kill(0, $mainpid) ) { last WAIT; }
-        sleep 1;
+    my @reqsvrs;
+    SVTYPE:
+    foreach my $svtype ( "main", "work", "resolve" ) {
+        my $pid = $pid_of{$svtype};
+        if ( ! $pid ) {
+            $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid",    { maxretry => 20 })
+                 : $svtype eq "work"    ? $scli->get_work_server_response("pid",    { maxretry => 20 })
+                 : $svtype eq "resolve" ? $scli->get_resolve_server_response("pid", { maxretry => 20 })
+                 :                        0;
+            $pid_of{$svtype} = $pid;
+            logger->info("Got pid of $svtype : $pid");
+        }
+        if ( ! $pid ) {
+            logger->error("Can't restart $svtype server cause failed to get pid");
+            next SVTYPE;
+        }
+        logger->info("Send SIGUSR1 to $svtype");
+        kill 'USR1', $pid or logger->error("Failed kill $svtype server");
+        push @reqsvrs, $svtype;
     }
-    my $mainret = start_main_server(1);
 
-    kill 'HUP', $workpid;
-
-    kill 'WINCH', $resolvepid;
-    WAIT:
-    for my $i ( 1..5 ) {
-        if ( ! kill(0, $resolvepid) ) { last WAIT; }
-        sleep 1;
+    my $reqopt = { ignore_error => 1, retryinterval => 3, maxretry => 100 };
+    SVTYPE:
+    foreach my $svtype ( @reqsvrs ) {
+        my $pid = $svtype eq "main"    ? $scli->get_main_server_response("pid", $reqopt)
+                : $svtype eq "work"    ? $scli->get_work_server_response("pid", $reqopt)
+                : $svtype eq "resolve" ? $scli->get_resolve_server_response("pid", $reqopt)
+                :                        0;
+        if ( ! $pid ) {
+            logger->error("Can't check $svtype server alive cause failed to get pid");
+        }
+        $pid_of{$svtype} = $pid;
+        logger->info("Got pid of $svtype : $pid");
     }
-    my $resolveret = start_resolve_server(1);
 
-    if ( ! $mainret || ! $resolveret ) { return "Failed\n"; }
-
+    if ( ! $pid_of{main} || ! $pid_of{work} ) { return; }
     set_currentfile($currfilepath);
     set_currentmodule($currmdlnm);
     set_currentmethod($currmtdnm);
@@ -745,13 +738,13 @@ sub debug_lexer {
 }
 
 sub update_config {
-    create_config(1);
-    my $c = get_config() or return;
-    $cachedir = $c->{cachedir};
-    $port1 = $c->{port1};
-    $port2 = $c->{port2};
-    $port3 = $c->{port3};
-    $maxtasks = $c->{maxtasks};
+    create_global_config() or return;
+    set_primary_config( cachedir => undef,
+                        port1    => undef,
+                        port2    => undef,
+                        port3    => undef,
+                        maxtasks => undef, );
+    setup_config("", 1) or return;
     return "Finished update config\n";
 }
 
@@ -782,76 +775,6 @@ sub explore_package {
     return $scli->get_main_server_response("explore $pkg_regexp");
 }
 
-
-sub get_config_path {
-    return File::Spec->rel2abs( $ENV{HOME}."/.plsense" );
-}
-
-sub get_config {
-    my $confpath = get_config_path();
-    if ( ! -f $confpath ) { return; }
-    my $fh;
-    if ( ! open($fh, '<:utf8', $confpath) ) {
-        print STDERR "Failed open [$confpath] : $!\n";
-        return;
-    }
-    my $c = Config::Tiny->read_string( do { local $/; <$fh> } );
-    if ( ! close $fh ) {
-        print STDERR "Failed close [$confpath] : $!\n";
-        return;
-    }
-    my $ret = {};
-    $ret->{cachedir} = $c->{_}{cachedir};
-    $ret->{port1} = $c->{_}{port1};
-    $ret->{port2} = $c->{_}{port2};
-    $ret->{port3} = $c->{_}{port3};
-    $ret->{maxtasks} = $c->{_}{maxtasks};
-    $ret->{loglevel} = $c->{_}{loglevel};
-    $ret->{logfile} = $c->{_}{logfile};
-    return $ret;
-}
-
-sub create_config {
-    my $update = shift || 0;
-    my $confpath = get_config_path();
-    if ( ! $update && -f $confpath ) { return; }
-    if ( ! -f $confpath ) {
-        my $ret = read_string("Not exist config file [$confpath]\nMaking? (Y/n) ");
-        if ( $ret && lc($ret) ne 'y' && lc($ret) ne 'yes' ) {
-            print "Not create/update [$confpath]\n";
-            return;
-        }
-    }
-    my $defaultdir = File::Spec->rel2abs( $ENV{HOME}."/.plsense.d" );
-    my $old = get_config();
-    my $c = Config::Tiny->new;
-    $c->{_}{cachedir} = read_string("Input cache directory path: ($defaultdir) ") || $defaultdir;
-    $c->{_}{port1} = read_string("Input port number for main server: (33333) ") || 33333;
-    $c->{_}{port2} = read_string("Input port number for work server: (33334) ") || 33334;
-    $c->{_}{port3} = read_string("Input port number for resolve server: (33335) ") || 33335;
-    $c->{_}{maxtasks} = read_string("Input limit count of task on server: (20) ") || 20;
-    $c->{_}{loglevel} = $old ? $old->{loglevel} : "";
-    $c->{_}{logfile} = $old ? $old->{logfile} : "";
-    WRITE:
-    for ( my $str = $c->write_string ) {
-        my $fh;
-        if ( ! open($fh, '>:utf8', $confpath) ) {
-            print STDERR "Failed open [$confpath] : $!\n";
-            last WRITE;
-        }
-        print $fh $str or print STDERR "Failed write [$str] to [$confpath] : $!\n";
-        close $fh or print STDERR "Failed close [$confpath] : $!\n";
-    }
-}
-
-sub read_string {
-    my $prompt = shift || "";
-    print $prompt;
-    my $ret = <STDIN>;
-    $ret =~ s{ ^\s+ }{}xms;
-    $ret =~ s{ \s+$ }{}xms;
-    return $ret;
-}
 
 sub verify_commands {
     my @chkcommands = ("which", "perldoc");
