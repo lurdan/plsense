@@ -5,6 +5,8 @@ Maintainer: KURASHIKI Satoru <lurdan@gmail.com>
 Build-Depends: debhelper (>= 9.20120312)
 Build-Depends-Indep: libcache-cache-perl,
  libmodule-install-perl,
+ libmodule-install-cpanfile-perl,
+ libmodule-cpanfile-perl,
  libclass-std-perl (>= 0.011),
  libclass-std-storable-perl,
  libconfig-tiny-perl (>= 2.14),
