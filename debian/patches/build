@@ -1,0 +1,13 @@
+Index: plsense/Makefile.PL
+===================================================================
+--- plsense.orig/Makefile.PL
++++ plsense/Makefile.PL
+@@ -16,7 +16,7 @@ install_script 'bin/plsense-worker-find'
+ 
+ tests_recursive;
+ 
+-cpanfile;
++#cpanfile;
+ 
+ WriteAll;
+ 
