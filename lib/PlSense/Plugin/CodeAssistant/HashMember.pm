@@ -4,10 +4,11 @@ use parent qw{ PlSense::Plugin::CodeAssistant };
 use strict;
 use warnings;
 use Class::Std;
+use List::AllUtils qw{ uniq };
 use PlSense::Logger;
 use PlSense::Util;
 {
-    sub is_valid_context {
+    sub is_only_valid_context {
         my ($self, $code, $tok) = @_;
 
         my $input = "";
@@ -88,16 +89,13 @@ use PlSense::Util;
 
     sub push_candidate_by_match : PRIVATE {
         my ($self, $addr) = @_;
-        my @values = addrrouter->resolve_anything($addr);
+        my @values = ($addr, addrrouter->resolve_anything($addr));
+        @values = uniq grep { $_ && ! eval { $_->isa("PlSense::Entity") } } @values;
         VALUE:
-        foreach my $value ( $addr, @values ) {
-            if ( ! $value || eval { $value->isa("PlSense::Entity") } ) { next VALUE; }
+        foreach my $value ( @values ) {
             logger->debug("Try push candidate by match : $value");
-            my $regexp = quotemeta($value)."\.H:([a-zA-Z0-9_\-]+)";
-            MATCH:
-            foreach my $key ( addrrouter->get_matched_route_list($regexp) ) {
-                if ( $key !~ m{ $regexp }xms ) { next MATCH; }
-                $self->push_candidate($1);
+            foreach my $m ( addrrouter->get_hash_members($value) ) {
+                $self->push_candidate($m);
             }
         }
         return;

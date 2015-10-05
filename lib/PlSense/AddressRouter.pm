@@ -13,9 +13,10 @@ use PlSense::Util;
     my %cache_of :ATTR( :default(undef) );
     my %routeh_of :ATTR();
     my %rrouteh_of :ATTR();
-    my %max_resolve_entry_of :ATTR( :init_arg<max_resolve_entry> :default(5) );
+    my %hmemberh_of :ATTR();
+    my %max_resolve_entry_of :ATTR( :init_arg<max_resolve_entry> :default(3) );
     my %max_address_entry_of :ATTR( :init_arg<max_address_entry> :default(2) );
-    my %max_reverse_address_entry_of :ATTR( :init_arg<max_reverse_address_entry> :default(10) );
+    my %max_reverse_address_entry_of :ATTR( :init_arg<max_reverse_address_entry> :default(30) );
     my %max_try_routing_of :ATTR( :init_arg<max_try_routing> :default(50) );
     my %commonkeyh_of :ATTR();
 
@@ -54,8 +55,8 @@ use PlSense::Util;
     sub store_current_project {
         my $self = shift;
         my $key = "perl.".$self->get_project;
-        try   { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self} }); }
-        catch { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self} }); };
+        try   { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self}, hmember => $hmemberh_of{ident $self} }); }
+        catch { $cache_of{ident $self}->set($key, { route => $routeh_of{ident $self}, rroute => $rrouteh_of{ident $self}, hmember => $hmemberh_of{ident $self} }); };
         logger->info("Stored project routing of $key");
     }
 
@@ -67,6 +68,7 @@ use PlSense::Util;
         catch { $cacheh = $cache_of{ident $self}->get($key); };
         $routeh_of{ident $self} = $cacheh && $cacheh->{"route"} ? $cacheh->{"route"} : {};
         $rrouteh_of{ident $self} = $cacheh && $cacheh->{"rroute"} ? $cacheh->{"rroute"} : {};
+        $hmemberh_of{ident $self} = $cacheh && $cacheh->{"hmember"} ? $cacheh->{"hmember"} : {};
         $self->init_common_key_hash;
         logger->info("Loaded project routing of $key");
     }
@@ -77,8 +79,10 @@ use PlSense::Util;
         my $filepath = shift || "";
         my $projectnm = shift || "";
         my $key = $self->get_cache_key($mdlnm, $filepath, $projectnm);
-        try   { $cache_of{ident $self}->set($key, $routeh_of{ident $self}); }
-        catch { $cache_of{ident $self}->set($key, $routeh_of{ident $self}); };
+        try   { $cache_of{ident $self}->set("[R]".$key, $routeh_of{ident $self}); }
+        catch { $cache_of{ident $self}->set("[R]".$key, $routeh_of{ident $self}); };
+        try   { $cache_of{ident $self}->set("[H]".$key, $hmemberh_of{ident $self}); }
+        catch { $cache_of{ident $self}->set("[H]".$key, $hmemberh_of{ident $self}); };
         logger->info("Stored routing of $key");
     }
 
@@ -93,19 +97,8 @@ use PlSense::Util;
     sub load_by_cache_key {
         my $self = shift;
         my $key = shift || "";
-        my $loadh;
-        try   { $loadh = $cache_of{ident $self}->get($key); }
-        catch { $loadh = $cache_of{ident $self}->get($key); };
-        if ( ! $loadh ) { return; }
-        ADDR:
-        foreach my $addr ( keys %$loadh ) {
-            my $resolves = $loadh->{$addr} or next ADDR;
-            RESOLVE:
-            foreach my $resolve ( @$resolves ) {
-                $self->add_route($addr, $resolve);
-            }
-        }
-        logger->info("Loaded routing of $key");
+        $self->load_by_route_key("[R]".$key);
+        $self->load_by_hash_member_key("[H]".$key);
     }
 
     sub remove {
@@ -120,27 +113,18 @@ use PlSense::Util;
         my $self = shift;
         my $key = shift || "";
         $self->remove_by_cache_key_on_memory($key);
-        try   { $cache_of{ident $self}->remove($key); }
-        catch { $cache_of{ident $self}->remove($key); };
+        try   { $cache_of{ident $self}->remove("[R]".$key); }
+        catch { $cache_of{ident $self}->remove("[R]".$key); };
+        try   { $cache_of{ident $self}->remove("[H]".$key); }
+        catch { $cache_of{ident $self}->remove("[H]".$key); };
         logger->info("Removed routing of $key");
     }
 
     sub remove_by_cache_key_on_memory {
         my $self = shift;
         my $key = shift || "";
-        my $loadh;
-        try   { $loadh = $cache_of{ident $self}->get($key); }
-        catch { $loadh = $cache_of{ident $self}->get($key); };
-        if ( ! $loadh ) { return; }
-        ADDR:
-        foreach my $addr ( keys %$loadh ) {
-            my $resolves = $loadh->{$addr} or next ADDR;
-            RESOLVE:
-            foreach my $resolve ( @$resolves ) {
-                $self->remove_route($addr, $resolve);
-            }
-        }
-        logger->info("Removed routing on memory of $key");
+        $self->remove_by_route_key_on_memory("[R]".$key);
+        $self->remove_by_hash_member_key_on_memory("[H]".$key);
     }
 
     sub remove_all {
@@ -155,7 +139,27 @@ use PlSense::Util;
         my $self = shift;
         $routeh_of{ident $self} = {};
         $rrouteh_of{ident $self} = {};
+        $hmemberh_of{ident $self} = {};
         $self->init_common_key_hash;
+    }
+
+    sub add_hash_member {
+        my ($self, $addr, @members) = @_;
+        if ( ! $addr || $#members < 0 ) { return; }
+
+        my $curr_members = $hmemberh_of{ident $self}->{$addr};
+        if ( ! $curr_members ) {
+            $curr_members = [];
+            $hmemberh_of{ident $self}->{$addr} = $curr_members;
+        }
+
+        MEMBER:
+        foreach my $m ( @members ) {
+            if ( ! $m ) { next MEMBER; }
+            if ( grep { $_ eq $m } @{$curr_members} ) { next MEMBER; }
+            push @{$curr_members}, $m;
+        }
+        logger->debug("Add hash member : $addr ... ".join(",", @{$curr_members}));
     }
 
     sub add_route {
@@ -207,10 +211,50 @@ use PlSense::Util;
 
         push @{$resolves}, $value;
         logger->debug("Add routing : $addr -> $vtext");
-        if ( ! $vtype ) { $self->add_reverse_route($value, $addr); }
+
+        # Check to need to add reverse route
+        my $need_r = $vtype                                                      ? 0 # no need if value is a entity
+                   : $addr =~ m{ \[\d+\] \z }xms && $vtext =~ m{ \[\d+\] \z }xms ? 0 # special if both are a argument
+                   : $vtext =~ m{ \[\d+\] \z }xms                                ? 1 # need if value only is a argument
+                   : $vtext =~ m{ ::BLESS \z }xms                                ? 1 # need if value means a class
+                   :                                                               0;
+        if ( $need_r ) { $self->add_reverse_route($value, $addr); }
+
         my $commonkey = $self->get_address_common_part($addr);
         if ( $commonkey ) { $commonkeyh_of{ident $self}->{$commonkey} = 1; }
+
         return $ret;
+    }
+
+    sub add_reverse_route {
+        my ($self, $addr, $raddr) = @_;
+        if ( ! $addr || ! $raddr ) { return; }
+
+        my $raddrs = $rrouteh_of{ident $self}->{$addr};
+        if ( ! $raddrs ) {
+            $raddrs = [];
+            $rrouteh_of{ident $self}->{$addr} = $raddrs;
+        }
+
+        if ( $#{$raddrs} >= $max_reverse_address_entry_of{ident $self} ) { return; }
+
+        my $idx = firstidx { $_ eq $raddr } @{$raddrs};
+        if ( $idx >= 0 ) { return; }
+
+        push @{$raddrs}, $raddr;
+        logger->debug("Add reverse routing : $addr -> $raddr");
+    }
+
+    sub remove_hash_member {
+        my ($self, $addr, @members) = @_;
+        if ( ! $addr || $#members < 0 ) { return; }
+        my $curr_members = $hmemberh_of{ident $self}->{$addr} or return;
+        my @new_members = grep {
+            my $m = $_;
+            grep { $_ && $_ eq $m } @members ? 0 : 1;
+        } @$curr_members;
+        $hmemberh_of{ident $self}->{$addr} = \@new_members;
+        logger->debug("Removed routing : $addr ... ".join(",", @new_members));
     }
 
     sub remove_route {
@@ -235,6 +279,16 @@ use PlSense::Util;
         logger->debug("Removed routing : $addr -> $vtext");
     }
 
+    sub remove_reverse_route {
+        my ($self, $addr, $raddr) = @_;
+        if ( ! $addr || ! $raddr ) { return; }
+        my $raddrs = $rrouteh_of{ident $self}->{$addr} or return;
+        my $idx = firstidx { $_ eq $raddr } @{$raddrs};
+        if ( $idx < 0 ) { return; }
+        splice @{$raddrs}, $idx, 1;
+        if ( $#{$raddrs} < 0 ) { delete $rrouteh_of{ident $self}->{$addr}; }
+    }
+
     sub exist_route {
         my ($self, $addr) = @_;
         if ( ! $addr ) { return; }
@@ -242,10 +296,24 @@ use PlSense::Util;
                exists $commonkeyh_of{ident $self}->{ $self->get_address_common_part($addr) };
     }
 
+    sub get_hash_members {
+        my ($self, $addr) = @_;
+        if ( ! $addr ) { return (); }
+        my $ret = $hmemberh_of{ident $self}->{$addr} || [];
+        return @{$ret};
+    }
+
     sub get_route {
         my ($self, $addr) = @_;
         if ( ! $addr ) { return (); }
         my $ret = $routeh_of{ident $self}->{$addr} || [];
+        return @{$ret};
+    }
+
+    sub get_reverse_route {
+        my ($self, $addr) = @_;
+        if ( ! $addr ) { return (); }
+        my $ret = $rrouteh_of{ident $self}->{$addr} || [];
         return @{$ret};
     }
 
@@ -287,6 +355,11 @@ use PlSense::Util;
         return keys %{$routeh_of{ident $self}};
     }
 
+    sub get_reverse_route_list {
+        my ($self) = @_;
+        return keys %{$rrouteh_of{ident $self}};
+    }
+
     sub get_matched_route_list {
         my ($self, $regexp) = @_;
         return grep { $_ =~ m{ $regexp }xms } keys %{$routeh_of{ident $self}};
@@ -319,6 +392,72 @@ use PlSense::Util;
         return "Route ... Entrys:".($#routes+1)." Resolves:".$valuecount."\n";
     }
 
+
+    sub load_by_route_key : PRIVATE {
+        my $self = shift;
+        my $key = shift || "";
+        my $loadh;
+        try   { $loadh = $cache_of{ident $self}->get($key); }
+        catch { $loadh = $cache_of{ident $self}->get($key); };
+        if ( ! $loadh ) { return; }
+        ADDR:
+        foreach my $addr ( keys %$loadh ) {
+            my $resolves = $loadh->{$addr} or next ADDR;
+            RESOLVE:
+            foreach my $resolve ( @$resolves ) {
+                $self->add_route($addr, $resolve);
+            }
+        }
+        logger->info("Loaded routing of $key");
+    }
+
+    sub load_by_hash_member_key : PRIVATE {
+        my $self = shift;
+        my $key = shift || "";
+        my $loadh;
+        try   { $loadh = $cache_of{ident $self}->get($key); }
+        catch { $loadh = $cache_of{ident $self}->get($key); };
+        if ( ! $loadh ) { return; }
+        ADDR:
+        foreach my $addr ( keys %$loadh ) {
+            my $members = $loadh->{$addr} or next ADDR;
+            $self->add_hash_member($addr, @$members);
+        }
+        logger->info("Loaded hash member of $key");
+    }
+
+    sub remove_by_route_key_on_memory : PRIVATE {
+        my $self = shift;
+        my $key = shift || "";
+        my $loadh;
+        try   { $loadh = $cache_of{ident $self}->get($key); }
+        catch { $loadh = $cache_of{ident $self}->get($key); };
+        if ( ! $loadh ) { return; }
+        ADDR:
+        foreach my $addr ( keys %$loadh ) {
+            my $resolves = $loadh->{$addr} or next ADDR;
+            RESOLVE:
+            foreach my $resolve ( @$resolves ) {
+                $self->remove_route($addr, $resolve);
+            }
+        }
+        logger->info("Removed routing on memory of $key");
+    }
+
+    sub remove_by_hash_member_key_on_memory : PRIVATE {
+        my $self = shift;
+        my $key = shift || "";
+        my $loadh;
+        try   { $loadh = $cache_of{ident $self}->get($key); }
+        catch { $loadh = $cache_of{ident $self}->get($key); };
+        if ( ! $loadh ) { return; }
+        ADDR:
+        foreach my $addr ( keys %$loadh ) {
+            my $members = $loadh->{$addr} or next ADDR;
+            $self->remove_hash_member($addr, @$members);
+        }
+        logger->info("Removed hash member on memory of $key");
+    }
 
     sub get_address_common_part : PRIVATE {
         my ($self, $addr) = @_;
@@ -456,11 +595,11 @@ use PlSense::Util;
 
     sub resolve_reverse_address : PRIVATE {
         my ($self, $addr, $allow_addr) = @_;
-
         my (@ret, @follows);
+
+        # do reverse routing only for a reference address
         if ( $addr !~ s{ \. ( R \.? .*? ) \z }{}xms ) { return @ret; }
 
-        # If exist reference in address, try resolve by reverse routing.
         @follows = split m{ \. }xms, $1;
         my $curraddr = $addr;
         FIND:
@@ -470,6 +609,7 @@ use PlSense::Util;
         }
         my $raddrs = $curraddr ? $rrouteh_of{ident $self}->{$curraddr} : [] or return @ret;
 
+        logger->debug("Found reverse route of $curraddr");
         my $fstr = join(".", @follows);
         PUSH_RESOLVED:
         foreach my $raddr ( @{$raddrs} ) {
@@ -693,34 +833,6 @@ use PlSense::Util;
         }
 
         return $old;
-    }
-
-    sub add_reverse_route : PRIVATE {
-        my ($self, $addr, $raddr) = @_;
-        if ( ! $addr || ! $raddr ) { return; }
-
-        my $raddrs = $rrouteh_of{ident $self}->{$addr};
-        if ( ! $raddrs ) {
-            $raddrs = [];
-            $rrouteh_of{ident $self}->{$addr} = $raddrs;
-        }
-
-        if ( $#{$raddrs} >= $max_reverse_address_entry_of{ident $self} ) { return; }
-
-        my $idx = firstidx { $_ eq $raddr } @{$raddrs};
-        if ( $idx >= 0 ) { return; }
-
-        push @{$raddrs}, $raddr;
-    }
-
-    sub remove_reverse_route : PRIVATE {
-        my ($self, $addr, $raddr) = @_;
-        if ( ! $addr || ! $raddr ) { return; }
-        my $raddrs = $rrouteh_of{ident $self}->{$addr} or return;
-        my $idx = firstidx { $_ eq $raddr } @{$raddrs};
-        if ( $idx < 0 ) { return; }
-        splice @{$raddrs}, $idx, 1;
-        if ( $#{$raddrs} < 0 ) { delete $rrouteh_of{ident $self}->{$addr}; }
     }
 
 }
