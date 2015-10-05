@@ -1,5 +1,5 @@
 Source: plsense
-Section: perl
+Section: devel
 Priority: optional
 Maintainer: KURASHIKI Satoru <lurdan@gmail.com>
 Build-Depends: debhelper (>= 9.20120312)
@@ -16,7 +16,7 @@ Build-Depends-Indep: libcache-cache-perl,
  libmodule-pluggable-perl,
  perl-doc,
  perl (>= 5.15.2)
-Standards-Version: 3.9.5
+Standards-Version: 3.9.6
 Vcs-Git: https://github.com/lurdan/plsense.git
 Vcs-Browser: https://github.com/lurdan/plsense/tree/dpkg
 Homepage: https://github.com/aki2o/plsense
